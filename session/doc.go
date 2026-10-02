@@ -50,13 +50,15 @@
 //
 // E2EE readiness:
 //
-// There are three equivalent ways to ask whether the session can encrypt
-// frames end-to-end. Which one to use depends on whether the caller blocks
-// or polls:
+// There are three ways to ask about readiness. Which one to use depends on
+// whether the caller blocks or polls, and on what it is asking:
 //
-//   - Session.Ready() returns the boolean snapshot. This is the form
-//     the audio layer is expected to call on every frame.
-//   - Session.State().Ready is the same boolean; State() additionally
+//   - Session.Ready() reports whether frames can flow: an E2EE epoch is
+//     active, or protocol version 0 has been negotiated and none will be.
+//     This is the form the audio layer is expected to call on every frame.
+//   - Session.State().Ready reports whether frames are end-to-end
+//     encrypted, so it stays false on a transport-only channel. State()
+//     additionally
 //     exposes the active EpochID and the start of any degraded window
 //     (DegradedSince), which audio senders can use to decide whether to
 //     stop feeding frames.
@@ -65,12 +67,12 @@
 //     session to measure first-handshake latency or to gate startup that
 //     must wait for encryption.
 //
-// Plain passthrough (e.g. on a protocol-version-0 channel) returns !Ready
-// forever; Session.ShouldHoldFrames() tells that stable state apart from a
-// transient handshake window (it reads State().ProtocolVersion under the
-// hood: 0 means "no E2EE on this channel", >0 plus !Ready means "handshake
-// pending") — audio senders should gate on it instead of combining the two
-// fields by hand.
+// Plain passthrough (e.g. on a protocol-version-0 channel) leaves
+// State().Ready false for ever; Session.ShouldHoldFrames() tells that stable
+// state apart from a transient handshake window (it reads
+// State().ProtocolVersion under the hood: 0 means "no E2EE on this channel",
+// >0 plus !Ready means "handshake pending") — audio senders should gate on it
+// instead of combining the two fields by hand.
 //
 // To get a *Session handle when the voice layer creates sessions internally,
 // pass CreateFunc(WithSessionHook(...)) as the voice manager's session

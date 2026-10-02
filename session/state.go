@@ -20,8 +20,9 @@ type State struct {
 	// ProtocolVersion is the DAVE protocol version reported by the voice
 	// gateway via SELECT_PROTOCOL_ACK, PREPARE_EPOCH or PREPARE_TRANSITION.
 	// 0 means transport-only: this channel will never have E2EE and Ready
-	// will stay false. >0 plus !Ready means a transient MLS handshake
-	// window. Use it to tell "hold frames while handshake completes" apart
+	// (this field) will stay false, though Session.Ready reports true once
+	// version 0 has been negotiated. >0 plus !Ready means a transient MLS
+	// handshake window. Use it to tell "hold frames while handshake completes" apart
 	// from "no E2EE; passthrough forever" without blocking the audio
 	// sender indefinitely.
 	ProtocolVersion uint16
@@ -136,28 +137,24 @@ func (s *Session) Stats() Stats {
 	return s.stats
 }
 
-// Ready reports whether the session has an active E2EE epoch and can encrypt
-// frames. Returns false during the MLS handshake window so audio senders can
-// hold frames until encryption is established. Returns true when the bot is
-// alone (sole-member epoch active) or when a multi-member epoch is ready.
+// Ready reports whether frames can be sent and received: an E2EE epoch is
+// active, or protocol version 0 is in effect and no E2EE will be established.
+// Returns false before the protocol is negotiated and during the MLS
+// handshake window, so audio senders hold frames until encryption is
+// established. This is godave.Session's contract ("sessions that never
+// establish E2EE always return true"), which disgo's voice layer gates on.
 // Encrypt never errors regardless — it falls back to passthrough — so callers
 // that don't gate on Ready still work correctly.
 //
-// Equivalent signals: State().Ready is the same boolean as a point-in-time
-// snapshot, and WaitReady(ctx) blocks until the first time it becomes true.
-// The noop session returned by godave.NewNoopSession makes Ready always
-// return true.
-//
-// To tell "handshake in progress, expect E2EE soon" apart from "this channel
-// will never have E2EE", check State().ProtocolVersion. 0 means no E2EE will
-// be established on this channel (Ready stays false forever); >0 with !Ready
-// means a transient handshake window. Audio senders should prefer
-// ShouldHoldFrames, which encodes that distinction.
+// State().Ready is narrower: whether frames are end-to-end encrypted, so it
+// stays false on a transport-only channel. WaitReady(ctx) blocks until the
+// first E2EE epoch activates. The noop session returned by
+// godave.NewNoopSession makes Ready always return true.
 func (s *Session) Ready() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.activeEpoch != nil && s.sendRatchet != nil
+	return (s.activeEpoch != nil && s.sendRatchet != nil) || s.transportOnly
 }
 
 // ShouldHoldFrames reports whether an audio sender should hold (not send)

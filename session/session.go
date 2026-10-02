@@ -44,6 +44,11 @@ type Session struct {
 
 	channelID       godave.ChannelID
 	protocolVersion uint16
+	// transportOnly is true once protocol version 0 is in effect: negotiated
+	// by SELECT_PROTOCOL_ACK or PrepareEpoch, or reached by an executed
+	// transition. Distinct from protocolVersion == 0, which is also the state
+	// before anything has been negotiated.
+	transportOnly bool
 
 	ssrcCodecs map[uint32]codecs.Kind
 	users      map[godave.UserID]struct{}
@@ -548,6 +553,7 @@ func (s *Session) OnSelectProtocolAck(protocolVersion uint16) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.protocolVersion = protocolVersion
+	s.transportOnly = protocolVersion == 0
 	if protocolVersion > 0 {
 		// select_protocol_ack always marks a new voice connection — reset all
 		// group state so stale data from a previous channel cannot block
@@ -625,6 +631,7 @@ func (s *Session) OnDaveExecuteTransition(transitionID uint16) {
 		"protocol_version", s.protocolVersion,
 		"pending_epoch_set", s.pendingEpoch != nil)
 	s.activeTransitionID = transitionID
+	s.transportOnly = s.protocolVersion == 0
 
 	// Downgrade to v0 (protocol.md:129): immediately clear the send-side
 	// so Encrypt falls back to passthrough. Keep activeEpoch for
@@ -661,6 +668,8 @@ func (s *Session) OnDavePrepareEpoch(epoch int, protocolVersion uint16) {
 	if epoch != 1 {
 		return
 	}
+
+	s.transportOnly = protocolVersion == 0
 
 	s.activeEpoch = nil
 	s.pendingEpoch = nil
