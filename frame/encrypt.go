@@ -117,6 +117,16 @@ func encryptInto(dst []byte, gcm cipher.AEAD, plaintext []byte, truncatedNonce u
 	return copy(dst[:len(out)], out), nil
 }
 
+// Sizes of the fixed parts of the supplemental data, and the byte its magic
+// marker repeats.
+// Reference: protocol.md "Protocol supplemental data size".
+const (
+	tagLen       = 8
+	supplSizeLen = 1
+	magicLen     = 2
+	magicByte    = 0xFA
+)
+
 // encryptCoreAppend appends an encrypted DAVE frame to dst and returns the
 // extended slice. dst is typically dst[:0] of a caller-owned buffer (see
 // encryptInto) or nil to always allocate.

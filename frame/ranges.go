@@ -19,7 +19,8 @@ func ValidateRanges(ranges []Range, size int) error {
 		if r.Offset < 0 || r.Length < 0 {
 			return ErrInvalidRanges
 		}
-		if r.Offset+r.Length > size {
+		// Offset+Length can overflow int, the subtraction can't.
+		if r.Length > size-r.Offset {
 			return ErrInvalidRanges
 		}
 		if i > 0 && r.Offset < prevEnd {
