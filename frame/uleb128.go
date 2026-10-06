@@ -2,6 +2,9 @@ package frame
 
 import "fmt"
 
+// valueBits is the width of the value DecodeULEB128 returns.
+const valueBits = 32
+
 func EncodeULEB128(value uint32) []byte {
 	return appendULEB128(make([]byte, 0, 5), value)
 }
@@ -28,6 +31,14 @@ func DecodeULEB128(data []byte) (value uint32, n int, err error) {
 		value |= uint32(b&0x7F) << shift
 		n = i + 1
 		if b < 0x80 {
+			// Each value has one encoding, so a frame has one set of bytes.
+			if i > 0 && b == 0 {
+				return 0, 0, fmt.Errorf("non-canonical uleb128: %w", ErrInvalidULEB128)
+			}
+			if b>>(valueBits-shift) != 0 {
+				return 0, 0, fmt.Errorf("uleb128 overflow: %w", ErrInvalidULEB128)
+			}
+
 			return value, n, nil
 		}
 		shift += 7
