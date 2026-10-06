@@ -87,8 +87,17 @@ func FuzzParse(f *testing.F) {
 	if err != nil {
 		f.Fatalf("encrypt error: %v", err)
 	}
+	noRanges, err := Encrypt(EncryptParams{
+		Plaintext:      []byte("opus frame payload"),
+		Key:            key,
+		TruncatedNonce: 1,
+	})
+	if err != nil {
+		f.Fatalf("encrypt error: %v", err)
+	}
 	f.Add(valid)
 	f.Add(withRangeTail(valid, 0x00))
+	f.Add(withPaddedNonce(noRanges))
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -98,6 +107,23 @@ func FuzzParse(f *testing.F) {
 		}
 		if size := supplementalSize(parsed.TruncatedNonce, parsed.UnencryptedRanges); size != int(parsed.SupplementalSize) {
 			t.Fatalf("supplemental size %d, but its contents encode in %d", parsed.SupplementalSize, size)
+		}
+	})
+}
+
+func FuzzDecodeULEB128(f *testing.F) {
+	f.Add([]byte{0x80, 0x01})
+	f.Add([]byte{0x81, 0x00})
+	f.Add([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0x10})
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		value, n, err := DecodeULEB128(data)
+		if err != nil {
+			return
+		}
+		if encoded := EncodeULEB128(value); !bytes.Equal(encoded, data[:n]) {
+			t.Fatalf("%x decodes to %d, which encodes as %x", data[:n], value, encoded)
 		}
 	})
 }

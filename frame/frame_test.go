@@ -85,6 +85,15 @@ func TestDecodeULEB128Errors(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for empty input")
 	}
+	_, _, err = DecodeULEB128([]byte{0x81, 0x00})
+	if err == nil {
+		t.Error("expected error for trailing zero byte")
+	}
+
+	_, _, err = DecodeULEB128([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0x10})
+	if err == nil {
+		t.Error("expected error for value over 32 bits")
+	}
 }
 
 func TestValidateRanges(t *testing.T) {
@@ -447,6 +456,20 @@ func withRangeTail(frame []byte, tail ...byte) []byte {
 	out = append(out, frame[sizeAt]+byte(len(tail)))
 
 	return append(out, frame[sizeAt+supplSizeLen:]...)
+}
+
+// withPaddedNonce re-encodes the one-byte nonce of frame, which must have no
+// ranges, as two bytes: the same value followed by a zero byte.
+func withPaddedNonce(frame []byte) []byte {
+	const (
+		nonceLen        = 1
+		continuationBit = 0x80
+	)
+	nonceAt := len(frame) - supplSizeLen - magicLen - nonceLen
+	padded := withRangeTail(frame, 0x00)
+	padded[nonceAt] |= continuationBit
+
+	return padded
 }
 
 func TestParseTrailingRangeBytes(t *testing.T) {
