@@ -6,8 +6,12 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 	"errors"
+	"math"
 	"testing"
 )
+
+// keyLen is the AES-128 key size.
+const keyLen = 16
 
 func discordMLSReferenceEncryptSecureFrame(key []byte, nonce uint32, opusData []byte) []byte {
 	block, err := aes.NewCipher(key)
@@ -96,9 +100,12 @@ func TestValidateRanges(t *testing.T) {
 		{"adjacent", []Range{{0, 10}, {10, 10}}, 100, false},
 		{"overlapping", []Range{{0, 20}, {10, 10}}, 100, true},
 		{"out_of_bounds", []Range{{90, 20}}, 100, true},
+		{"ends_at_size", []Range{{90, 10}}, 100, false},
+		{"one_past_size", []Range{{91, 10}}, 100, true},
 		{"negative_offset", []Range{{-1, 10}}, 100, true},
 		{"negative_length", []Range{{0, -1}}, 100, true},
 		{"unsorted", []Range{{20, 10}, {5, 10}}, 100, true},
+		{"offset_plus_length_overflows", []Range{{math.MaxInt, 1}}, 100, true},
 	}
 
 	for _, tt := range tests {
@@ -295,6 +302,34 @@ func TestDecryptInvalidFrame(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error for non-DAVE frame")
+	}
+}
+
+// rangeOffsetOverflowFrame is a frame whose one range starts at
+// math.MaxInt32, which is math.MaxInt on 32-bit builds.
+func rangeOffsetOverflowFrame() []byte {
+	const (
+		nonce       = 1
+		rangeLength = 1
+	)
+	payload := []byte("opus frame payload")
+	footer := make([]byte, tagLen)
+	footer = appendULEB128(footer, nonce)
+	footer = appendULEB128(footer, math.MaxInt32)
+	footer = appendULEB128(footer, rangeLength)
+	frame := append(payload, footer...)
+
+	return append(frame, byte(len(footer)+supplSizeLen+magicLen), magicByte, magicByte)
+}
+
+func TestDecryptRangeOffsetOverflow(t *testing.T) {
+	key := make([]byte, keyLen)
+	_, _, err := Decrypt(DecryptParams{
+		Ciphertext: rangeOffsetOverflowFrame(),
+		Key:        key,
+	})
+	if err == nil {
+		t.Error("expected error for range past the end of the frame")
 	}
 }
 
