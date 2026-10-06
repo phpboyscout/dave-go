@@ -294,6 +294,54 @@ func TestEncryptInvalidRanges(t *testing.T) {
 	}
 }
 
+// supplementalSize is the supplemental size of a frame with nonce and ranges,
+// worked out from their encodings rather than from Encrypt's output.
+func supplementalSize(nonce uint32, ranges []Range) int {
+	size := tagLen + len(EncodeULEB128(nonce)) + supplSizeLen + magicLen
+	for _, r := range ranges {
+		size += len(EncodeULEB128(uint32(r.Offset))) + len(EncodeULEB128(uint32(r.Length)))
+	}
+
+	return size
+}
+
+func TestEncryptSupplementalSizeLimit(t *testing.T) {
+	const (
+		twoByteNonce   = 1 << 7
+		threeByteNonce = 1 << 14
+	)
+	key := make([]byte, keyLen)
+
+	// Each range adds 2 bytes, so this stops exactly at the limit.
+	var ranges []Range
+	for supplementalSize(twoByteNonce, ranges) < maxSupplSize {
+		ranges = append(ranges, Range{len(ranges), 1})
+	}
+
+	tests := []struct {
+		name    string
+		nonce   uint32
+		wantErr bool
+	}{
+		{"at_limit", twoByteNonce, false},
+		{"over_limit", threeByteNonce, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Encrypt(EncryptParams{
+				Plaintext:         make([]byte, len(ranges)),
+				Key:               key,
+				TruncatedNonce:    tt.nonce,
+				UnencryptedRanges: ranges,
+			})
+			if errors.Is(err, ErrInvalidSupplementalSize) != tt.wantErr {
+				t.Errorf("got err=%v, wantErr=%v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestDecryptInvalidFrame(t *testing.T) {
 	key := make([]byte, 16)
 	_, _, err := Decrypt(DecryptParams{

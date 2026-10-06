@@ -4,6 +4,7 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 // EncryptWithCipherParams holds the parameters for EncryptWithCipher.
@@ -125,6 +126,7 @@ const (
 	supplSizeLen = 1
 	magicLen     = 2
 	magicByte    = 0xFA
+	maxSupplSize = math.MaxUint8
 )
 
 // encryptCoreAppend appends an encrypted DAVE frame to dst and returns the
@@ -148,7 +150,7 @@ func encryptCoreAppend(dst []byte, gcm cipher.AEAD, plaintext []byte, truncatedN
 		// gcm8.Seal returns dst extended by ciphertext+tag(8).
 		out := gcm.Seal(dst, nonce[:], plaintext, nil)
 
-		supplSize := uint8(8 + len(nonceBytes) + 1 + 2)
+		supplSize := uint8(tagLen + len(nonceBytes) + supplSizeLen + magicLen)
 		out = append(out, nonceBytes...)
 		out = append(out, supplSize)
 		out = append(out, 0xFA, 0xFA)
@@ -181,8 +183,11 @@ func encryptCoreAppend(dst []byte, gcm cipher.AEAD, plaintext []byte, truncatedN
 	// Suppl. Size covers all the supplemental content:
 	// tag(8) + nonce(ULEB128) + rangesData + this byte(1) + magic(2)
 	// Reference: protocol.md "Protocol supplemental data size"
-	supplSize := uint8(8 + len(nonceBytes) + rangesLen + 1 + 2)
-	out = append(out, supplSize)
+	supplSize := tagLen + len(nonceBytes) + rangesLen + supplSizeLen + magicLen
+	if supplSize > maxSupplSize {
+		return nil, fmt.Errorf("supplemental size %d out of range: %w", supplSize, ErrInvalidSupplementalSize)
+	}
+	out = append(out, uint8(supplSize))
 	out = append(out, 0xFA, 0xFA)
 
 	return out, nil
