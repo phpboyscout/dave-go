@@ -67,6 +67,23 @@ jobs:
           path: ${{ matrix.module }}/coverage.out
           if-no-files-found: ignore
 
+  # int is 32 bits here, so offset and size arithmetic that is safe on amd64
+  # can overflow. -race isn't supported on 386.
+  test-386:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Test (GOARCH=386)
+        env:
+          GOARCH: '386'
+        run: go test -v -shuffle=on ./...
+
   golangci:
     runs-on: ubuntu-latest
     strategy:
