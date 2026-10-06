@@ -29,6 +29,9 @@ var _ godave.Session = (*Session)(nil)
 // *Session via WithSessionHook. A Session is single-use per voice connection;
 // call Close when discarding it (channel move, disconnect).
 type Session struct {
+	// retry is the send back-off, fixed when the Session is created.
+	retry retryConfig
+
 	// logger carries the session's correlation fields (dave_session, user_id and,
 	// once known, channel_id) so every line can be traced back to one connection.
 	// baseLogger keeps the original caller logger to re-bind those fields when the
@@ -221,6 +224,7 @@ func New(userID godave.UserID, callbacks godave.Callbacks, opts ...Option) *Sess
 		users:            make(map[godave.UserID]struct{}),
 		sendCounter:      mediakeys.NewNonceCounter(),
 		sendRetentionTTL: cfg.sendRetentionTTL,
+		retry:            defaultRetryConfig(),
 		epochReady:       make(chan struct{}),
 		recoveryTimeout:  cfg.recoveryTimeout,
 		shutdownCtx:      ctx,

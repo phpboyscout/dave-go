@@ -21,6 +21,20 @@ var (
 	retryMaxAttempts = 6 //nolint:gochecknoglobals
 )
 
+// retryConfig is the back-off a Session uses, copied from the package defaults
+// when the Session is created. Reading it from the Session instead of the
+// package variables keeps a recovery goroutine that outlives its test from
+// racing with a later test that changes those variables.
+type retryConfig struct {
+	delay       time.Duration
+	maxDelay    time.Duration
+	maxAttempts int
+}
+
+func defaultRetryConfig() retryConfig {
+	return retryConfig{delay: retryDelay, maxDelay: retryMaxDelay, maxAttempts: retryMaxAttempts}
+}
+
 // isShardNotReady reports whether err is a transient "shard not ready" from
 // the voice gateway — this happens during the brief window after a channel move
 // while the WebSocket handshake hasn't completed yet.
@@ -37,7 +51,7 @@ func isShardNotReady(err error) bool {
 // s.mu must be held by the caller; it remains held throughout (including
 // during sleeps) so callers don't need to re-validate state after each attempt.
 func (s *Session) retrySend(fn func() error) error {
-	delay := retryDelay
+	delay := s.retry.delay
 
 	// retryStart is set the first time we decide to retry (i.e. the first
 	// "shard is not ready" failure), not at function entry — a single fn()
@@ -53,13 +67,13 @@ func (s *Session) retrySend(fn func() error) error {
 		}
 	}()
 
-	for i := range retryMaxAttempts {
+	for i := range s.retry.maxAttempts {
 		err := fn()
 		if err == nil {
 			return nil
 		}
 
-		if !isShardNotReady(err) || i == retryMaxAttempts-1 {
+		if !isShardNotReady(err) || i == s.retry.maxAttempts-1 {
 			return err
 		}
 
@@ -69,7 +83,7 @@ func (s *Session) retrySend(fn func() error) error {
 
 		s.logger.Debug("shard not ready, retrying send",
 			"attempt", i+1,
-			"max_attempts", retryMaxAttempts,
+			"max_attempts", s.retry.maxAttempts,
 			"delay_ms", delay.Milliseconds())
 
 		// Interruptible sleep: bail out if the session is closed.
@@ -83,7 +97,7 @@ func (s *Session) retrySend(fn func() error) error {
 		}
 
 		// Exponential backoff with cap.
-		delay = min(time.Duration(float64(delay)*retryBackoffFactor), retryMaxDelay)
+		delay = min(time.Duration(float64(delay)*retryBackoffFactor), s.retry.maxDelay)
 	}
 
 	return nil

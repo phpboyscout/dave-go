@@ -56,6 +56,7 @@ var (
 	channelID    = snowflake.GetEnv("DISCORD_CHANNEL_ID")
 	followUserID = snowflake.GetEnv("DISCORD_FOLLOW_USER_ID") // optional: user the bot follows across channels
 	dcaFile      = envOrDefault("DCA_FILE", "./nico.dca")
+	reproBusySpin = os.Getenv("REPRO_BUSYSPIN") == "1"
 )
 
 func envOrDefault(key, fallback string) string {
@@ -208,7 +209,13 @@ func (m *mover) connectAndPlay(ch snowflake.ID) {
 		return
 	}
 
-	go readUDP(conn)
+	if reproBusySpin {
+		receiver := &countingOpusReceiver{}
+		conn.SetOpusFrameReceiver(receiver)
+		slog.Info("REPRO_BUSYSPIN active: using disgo's SetOpusFrameReceiver (real defaultAudioReceiver, has the busy-spin bug) instead of the harness's own ReadPacket loop")
+	} else {
+		go readUDP(conn)
+	}
 
 	// Hold frames during a transient E2EE handshake: Encrypt would fall back
 	// to passthrough (plaintext) and E2EE-expecting receivers drop those
@@ -256,6 +263,22 @@ func (m *mover) connect(ch snowflake.ID) voice.Conn {
 
 	return conn
 }
+
+// countingOpusReceiver is a minimal voice.OpusFrameReceiver that only counts
+// frames — enough to activate disgo's real defaultAudioReceiver (and thus its
+// receive-loop busy-spin bug while !DAVE().Ready()) against a real Discord
+// connection, without needing to do anything with the audio itself.
+type countingOpusReceiver struct {
+	frames atomic.Uint64
+}
+
+func (r *countingOpusReceiver) ReceiveOpusFrame(snowflake.ID, *voice.Packet) error {
+	r.frames.Add(1)
+
+	return nil
+}
+func (r *countingOpusReceiver) CleanupUser(snowflake.ID) {}
+func (r *countingOpusReceiver) Close()                   {}
 
 // decryptFailures counts incoming frames the session could not decrypt.
 // Bursts right after a join/move are protocol-normal (frames encrypted for
