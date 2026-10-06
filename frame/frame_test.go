@@ -439,6 +439,45 @@ func TestParseValidFrame(t *testing.T) {
 	}
 }
 
+// withRangeTail returns frame with tail added to the end of its ranges and
+// the supplemental size grown to match.
+func withRangeTail(frame []byte, tail ...byte) []byte {
+	sizeAt := len(frame) - supplSizeLen - magicLen
+	out := append(append([]byte(nil), frame[:sizeAt]...), tail...)
+	out = append(out, frame[sizeAt]+byte(len(tail)))
+
+	return append(out, frame[sizeAt+supplSizeLen:]...)
+}
+
+func TestParseTrailingRangeBytes(t *testing.T) {
+	key := make([]byte, keyLen)
+	encrypted, err := Encrypt(EncryptParams{
+		Plaintext:         []byte("test payload"),
+		Key:               key,
+		TruncatedNonce:    1,
+		UnencryptedRanges: []Range{{0, 4}},
+	})
+	if err != nil {
+		t.Fatalf("encrypt error: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		tail []byte
+	}{
+		{"complete_uleb128", []byte{0x00}},
+		{"truncated_uleb128", []byte{0x80}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Parse(withRangeTail(encrypted, tt.tail...)); err == nil {
+				t.Error("expected error for trailing range bytes")
+			}
+		})
+	}
+}
+
 func TestParseTooShort(t *testing.T) {
 	_, err := Parse([]byte{0xFA, 0xFA})
 	if err == nil {

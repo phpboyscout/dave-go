@@ -75,3 +75,29 @@ func FuzzEncryptDecrypt(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParse(f *testing.F) {
+	key := make([]byte, keyLen)
+	valid, err := Encrypt(EncryptParams{
+		Plaintext:         []byte("opus frame payload"),
+		Key:               key,
+		TruncatedNonce:    1,
+		UnencryptedRanges: []Range{{0, 4}},
+	})
+	if err != nil {
+		f.Fatalf("encrypt error: %v", err)
+	}
+	f.Add(valid)
+	f.Add(withRangeTail(valid, 0x00))
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		parsed, err := Parse(data)
+		if err != nil {
+			return
+		}
+		if size := supplementalSize(parsed.TruncatedNonce, parsed.UnencryptedRanges); size != int(parsed.SupplementalSize) {
+			t.Fatalf("supplemental size %d, but its contents encode in %d", parsed.SupplementalSize, size)
+		}
+	})
+}

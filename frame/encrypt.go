@@ -351,12 +351,12 @@ func Parse(packet []byte) (*ParsedFrame, error) {
 	for len(rangesData) > 0 {
 		offset, n1, err := DecodeULEB128(rangesData)
 		if err != nil {
-			break
+			return nil, err
 		}
 		rangesData = rangesData[n1:]
 		length, n2, err := DecodeULEB128(rangesData)
 		if err != nil {
-			break
+			return nil, err
 		}
 		rangesData = rangesData[n2:]
 		ranges = append(ranges, Range{
