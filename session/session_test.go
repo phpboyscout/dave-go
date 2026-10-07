@@ -150,6 +150,7 @@ func TestOnDavePrepareTransition(t *testing.T) {
 
 func TestOnDaveExecuteTransitionNoPendingEpoch(t *testing.T) {
 	s := New("test_user", testCallbacks{})
+	s.OnDavePrepareTransition(5, 1)
 	s.OnDaveExecuteTransition(5)
 
 	sess := s
@@ -161,6 +162,45 @@ func TestOnDaveExecuteTransitionNoPendingEpoch(t *testing.T) {
 	}
 	if sess.pendingTransitionID != 0 {
 		t.Fatalf("expected pendingTransitionID 0, got %d", sess.pendingTransitionID)
+	}
+}
+
+func TestOnDaveExecuteTransitionOnlyPreparedID(t *testing.T) {
+	const preparedID = 5
+	tests := []struct {
+		name            string
+		protocolVersion uint16
+		executeID       uint16
+		wantExecuted    bool
+	}{
+		{"prepared", 1, preparedID, true},
+		{"other_id", 1, preparedID + 1, false},
+		{"downgrade_prepared", 0, preparedID, true},
+		{"downgrade_other_id", 0, preparedID + 1, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New("test_user", testCallbacks{})
+			s.OnDavePrepareTransition(preparedID, tt.protocolVersion)
+			s.mu.Lock()
+			s.pendingEpoch = &epochState{id: 100}
+			s.mu.Unlock()
+
+			s.OnDaveExecuteTransition(tt.executeID)
+
+			s.mu.RLock()
+			defer s.mu.RUnlock()
+			if executed := s.pendingEpoch == nil; executed != tt.wantExecuted {
+				t.Errorf("executed=%v, want %v", executed, tt.wantExecuted)
+			}
+			if recorded := s.activeTransitionID == tt.executeID; recorded != tt.wantExecuted {
+				t.Errorf("activeTransitionID=%d, want executed=%v", s.activeTransitionID, tt.wantExecuted)
+			}
+			if wantTransportOnly := tt.wantExecuted && tt.protocolVersion == 0; s.transportOnly != wantTransportOnly {
+				t.Errorf("transportOnly=%v, want %v", s.transportOnly, wantTransportOnly)
+			}
+		})
 	}
 }
 

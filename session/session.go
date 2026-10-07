@@ -634,6 +634,13 @@ func (s *Session) OnDaveExecuteTransition(transitionID uint16) {
 		"transition_id", transitionID,
 		"protocol_version", s.protocolVersion,
 		"pending_epoch_set", s.pendingEpoch != nil)
+	if transitionID != s.pendingTransitionID {
+		s.logger.Warn("ignoring execute_transition for a transition that was not prepared",
+			"transition_id", transitionID,
+			"pending_transition_id", s.pendingTransitionID)
+
+		return
+	}
 	s.activeTransitionID = transitionID
 	s.transportOnly = s.protocolVersion == 0
 
