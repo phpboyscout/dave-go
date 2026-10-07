@@ -204,6 +204,53 @@ func TestOnDaveExecuteTransitionOnlyPreparedID(t *testing.T) {
 	}
 }
 
+func TestDecryptRetainedEpochExpiry(t *testing.T) {
+	const retainedEpochID = 1
+	tests := []struct {
+		name      string
+		expiresIn time.Duration
+		wantErr   bool
+	}{
+		{"within_retention", epochRetention, false},
+		{"after_retention", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New("test_user", testCallbacks{})
+			ratchet := makeTestRatchet(t)
+			s.mu.Lock()
+			s.protocolVersion = uint16(s.MaxSupportedProtocolVersion())
+			s.activeEpoch = &epochState{id: retainedEpochID + 1, senders: map[godave.UserID]*senderState{}}
+			s.retainedEpoch = []*epochState{{
+				id:        retainedEpochID,
+				expiresAt: time.Now().Add(tt.expiresIn),
+				senders: map[godave.UserID]*senderState{
+					"peer": {ratchet: ratchet, expander: mediakeys.NewNonceExpander()},
+				},
+			}}
+			s.mu.Unlock()
+
+			key, err := ratchet.GetKey(ratchet.CurrentGeneration())
+			if err != nil {
+				t.Fatalf("GetKey: %v", err)
+			}
+			encrypted, err := frame.Encrypt(frame.EncryptParams{
+				Plaintext: []byte("old epoch audio"),
+				Key:       key,
+			})
+			if err != nil {
+				t.Fatalf("Encrypt: %v", err)
+			}
+
+			_, err = s.Decrypt("peer", encrypted, make([]byte, len(encrypted)))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("got err=%v, wantErr=%v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestOnDavePrepareEpochReset(t *testing.T) {
 	s := New("test_user", testCallbacks{})
 	sess := s
