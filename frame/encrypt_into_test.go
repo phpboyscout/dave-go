@@ -2,6 +2,7 @@ package frame
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -109,6 +110,46 @@ func TestEncryptIntoBufferTooSmall(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for undersized buffer")
+	}
+}
+
+func TestEncryptIntoUsesLenNotCap(t *testing.T) {
+	key := make([]byte, 16)
+	gcm, err := newGCM8(key)
+	if err != nil {
+		t.Fatalf("newGCM8: %v", err)
+	}
+	plaintext := []byte("opus frame payload")
+	want, err := Encrypt(EncryptParams{Plaintext: plaintext, Key: key})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		encrypt func(dst []byte) (int, error)
+	}{
+		{"EncryptInto", func(dst []byte) (int, error) {
+			return EncryptInto(dst, EncryptParams{Plaintext: plaintext, Key: key})
+		}},
+		{"EncryptWithCipherInto", func(dst []byte) (int, error) {
+			return EncryptWithCipherInto(dst, EncryptWithCipherParams{Plaintext: plaintext, Cipher: gcm})
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dst := make([]byte, 0, len(plaintext)+64)
+			if _, err := tt.encrypt(dst); !errors.Is(err, ErrBufferTooSmall) {
+				t.Errorf("got err=%v, want %v", err, ErrBufferTooSmall)
+			}
+			if spare := dst[:cap(dst)]; !bytes.Equal(spare, make([]byte, len(spare))) {
+				t.Errorf("wrote past len(dst): %x", spare)
+			}
+			if _, err := tt.encrypt(make([]byte, len(want))); err != nil {
+				t.Errorf("dst of exactly the frame's length: %v", err)
+			}
+		})
 	}
 }
 
