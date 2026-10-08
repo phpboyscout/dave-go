@@ -470,6 +470,9 @@ func (s *Session) Decrypt(userID godave.UserID, frameData []byte, decryptedFrame
 		return 0, err
 	}
 
+	// Activation also prunes, but a quiet channel may not see another for a
+	// long time after the retention window has closed.
+	s.pruneRetainedEpochsLocked()
 	candidates := make([]*epochState, 0, 2+len(s.retainedEpoch))
 	if s.activeEpoch != nil {
 		candidates = append(candidates, s.activeEpoch)
