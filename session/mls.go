@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"time"
 
@@ -61,32 +59,11 @@ func (e exporterAdapter) Export(label string, ctx []byte, length int) ([]byte, e
 		return nil, ErrExporterSecretUnavailable
 	}
 
-	exporterSecretPrefixLen := 8
-	exporterSecretBytes := groupState.EpochSecrets().ExporterSecret.AsSlice()
-	if len(exporterSecretBytes) < exporterSecretPrefixLen {
-		exporterSecretPrefixLen = len(exporterSecretBytes)
-	}
-
-	discordExport, err := mediakeys.ExportWithMLSExporterSecret(
+	return mediakeys.ExportWithMLSExporterSecret(
 		groupState.EpochSecrets().ExporterSecret,
 		groupState.CipherSuite(),
 		label, ctx, length,
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	exportPrefixLen := min(len(discordExport), 8)
-
-	slog.Default().Debug("exporter derivation",
-		"group_id", fmt.Sprintf("%x", e.groupID),
-		"label", label,
-		"context_prefix", hex.EncodeToString(ctx[:minInt(len(ctx), 8)]),
-		"exporter_secret_prefix", hex.EncodeToString(exporterSecretBytes[:exporterSecretPrefixLen]),
-		"export_prefix", hex.EncodeToString(discordExport[:exportPrefixLen]),
-	)
-
-	return discordExport, nil
 }
 
 func userIDToIdentityBytes(userID godave.UserID) ([]byte, error) {
@@ -130,6 +107,7 @@ func (s *Session) ensureMLSClientLocked() error {
 		ciphersuite.MLS128DHKEMP256,
 		mls.WithStorage(store, store),
 		mls.WithCacheStrategy(mls.CacheNone),
+		mls.WithLogger(s.logger),
 	)
 	if err != nil {
 		return fmt.Errorf("create mls client: %w", err)
@@ -588,25 +566,16 @@ func (s *Session) rebuildEpochStateLocked(groupID []byte) (*epochState, error) {
 		if err != nil {
 			return nil, fmt.Errorf("derive sender base secret for %s: %w", memberUserID, err)
 		}
-		baseSecretPreviewLen := min(len(baseSecret), 8)
 
 		ratchet, err := mediakeys.NewKeyRatchet(baseSecret)
 		if err != nil {
 			return nil, fmt.Errorf("build ratchet for %s: %w", memberUserID, err)
 		}
 
-		generationZeroKey, err := ratchet.GetKey(0)
-		if err != nil {
-			return nil, fmt.Errorf("derive generation 0 key for %s: %w", memberUserID, err)
-		}
-		generationZeroPreviewLen := min(len(generationZeroKey), 8)
-
 		s.logger.Debug("sender key material derived",
 			"epoch_id", epochID,
 			"member_user_id", memberUserID,
 			"sender_id", senderID,
-			"base_secret_prefix", hex.EncodeToString(baseSecret[:baseSecretPreviewLen]),
-			"generation0_key_prefix", hex.EncodeToString(generationZeroKey[:generationZeroPreviewLen]),
 		)
 
 		state.senders[memberUserID] = &senderState{

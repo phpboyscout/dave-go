@@ -2,9 +2,14 @@ package session
 
 import (
 	"bytes"
+	"context"
+	"encoding/hex"
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/thomas-vilte/dave-go/mediakeys"
+	"github.com/thomas-vilte/mls-go/group"
 )
 
 func TestSessionLoggerCarriesCorrelationFields(t *testing.T) {
@@ -80,5 +85,89 @@ func TestNewSessionID_Unique(t *testing.T) {
 			t.Fatalf("duplicate session id: %s", id)
 		}
 		seen[id] = struct{}{}
+	}
+}
+
+// containsSecretBytes reports whether logs holds any 6-byte run of secret in
+// hex, so a match doesn't depend on which slice of it a log line printed.
+func containsSecretBytes(logs string, secret []byte) bool {
+	const window = 6
+	for i := 0; i+window <= len(secret); i++ {
+		if strings.Contains(strings.ToLower(logs), hex.EncodeToString(secret[i:i+window])) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func TestDebugLogsCarryNoKeyMaterial(t *testing.T) {
+	var defaultLogs, sessionLogs bytes.Buffer
+	debug := &slog.HandlerOptions{Level: slog.LevelDebug}
+	// slog.Default is process-wide, so this test must not run in parallel
+	// with anything else that logs through it.
+	oldDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&defaultLogs, debug)))
+	t.Cleanup(func() { slog.SetDefault(oldDefault) })
+
+	cb := &kpCapturingCallbacks{}
+	s := New("123456789", cb, WithLogger(slog.New(slog.NewTextHandler(&sessionLogs, debug))))
+	s.SetChannelID(987654321)
+	s.OnSelectProtocolAck(1)
+	externalSenderPackage := buildExternalSenderPackage(t)
+	s.OnDaveMLSExternalSenderPackage(externalSenderPackage)
+	_, welcome := newWelcomeForExternalSender(t, cb.lastKeyPackage(), externalSenderPackage)
+	// The peer that built the Welcome logs through slog.Default; only the bot's
+	// own lines are under test.
+	defaultLogs.Reset()
+	s.OnDaveMLSWelcome(0, welcome)
+	if !s.State().Ready {
+		t.Fatal("State().Ready should be true once the Welcome's epoch is active")
+	}
+
+	s.mu.RLock()
+	store, groupID := s.mlsClient.store, s.groupID
+	s.mu.RUnlock()
+	raw, err := store.LoadGroupState(context.Background(), group.NewGroupID(groupID))
+	if err != nil {
+		t.Fatalf("LoadGroupState: %v", err)
+	}
+	state, err := group.UnmarshalGroupState(raw)
+	if err != nil {
+		t.Fatalf("UnmarshalGroupState: %v", err)
+	}
+	baseSecret, err := mediakeys.DeriveSenderBaseSecret(exporterAdapter{store: store, groupID: groupID}, 123456789)
+	if err != nil {
+		t.Fatalf("DeriveSenderBaseSecret: %v", err)
+	}
+	ratchet, err := mediakeys.NewKeyRatchet(baseSecret)
+	if err != nil {
+		t.Fatalf("NewKeyRatchet: %v", err)
+	}
+	generationZeroKey, err := ratchet.GetKey(0)
+	if err != nil {
+		t.Fatalf("GetKey(0): %v", err)
+	}
+
+	secrets := map[string][]byte{
+		"sender base secret":  baseSecret,
+		"generation 0 key":    generationZeroKey,
+		"MLS exporter secret": state.EpochSecrets().ExporterSecret.AsSlice(),
+	}
+	for name, secret := range secrets {
+		if containsSecretBytes(sessionLogs.String(), secret) {
+			t.Errorf("session logger output contains bytes of the %s", name)
+		}
+	}
+	if !strings.Contains(sessionLogs.String(), `msg="joined group"`) {
+		t.Error("mls-go's join was not logged through the session logger")
+	}
+	for line := range strings.Lines(defaultLogs.String()) {
+		// Recovery watchdogs left running by earlier tests can log here
+		// through their own sessions' default loggers.
+		if strings.Contains(line, "dave_session=") && !strings.Contains(line, "dave_session="+s.id) {
+			continue
+		}
+		t.Errorf("logged through slog.Default instead of the session logger:\n%s", line)
 	}
 }
