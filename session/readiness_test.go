@@ -1,6 +1,9 @@
 package session
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/thomas-vilte/dave-go/mediakeys"
@@ -159,5 +162,69 @@ func TestShouldHoldFrames(t *testing.T) {
 	s.mu.Unlock()
 	if s.ShouldHoldFrames() {
 		t.Fatal("ShouldHoldFrames=true while Ready, want false")
+	}
+}
+
+func TestState_DegradedSinceOnEpochReset(t *testing.T) {
+	tests := []struct {
+		name            string
+		established     bool
+		protocolVersion uint16
+		wantDegraded    bool
+		alreadyDegraded bool
+	}{
+		{"established_reset", true, 1, true, false},
+		{"established_downgrade", true, 0, false, false},
+		{"first_epoch", false, 1, false, false},
+		{"already_degraded", true, 1, true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			cb := &kpCapturingCallbacks{}
+			s := New("123456789", cb, WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))))
+			s.SetChannelID(987654321)
+			s.OnSelectProtocolAck(1)
+			if tt.established {
+				s.OnDaveMLSExternalSenderPackage(buildExternalSenderPackage(t))
+				s.OnDavePrepareTransition(0, 1)
+				if !s.State().Ready {
+					t.Fatal("sole-member epoch not active")
+				}
+			}
+
+			if tt.alreadyDegraded {
+				s.mu.Lock()
+				s.markDegradedLocked("earlier fault")
+				s.mu.Unlock()
+			}
+			before := s.State().DegradedSince
+
+			logs.Reset()
+			s.OnDavePrepareEpoch(1, tt.protocolVersion)
+			if degraded := !s.State().DegradedSince.IsZero(); degraded != tt.wantDegraded {
+				t.Fatalf("after prepare_epoch(1, %d): degraded=%v, want %v", tt.protocolVersion, degraded, tt.wantDegraded)
+			}
+			if !tt.wantDegraded {
+				return
+			}
+			if tt.alreadyDegraded {
+				if got := s.State().DegradedSince; !got.Equal(before) || strings.Contains(logs.String(), "entering degraded") {
+					t.Errorf("reset while degraded moved DegradedSince %v -> %v or logged again:\n%s", before, got, logs.String())
+				}
+
+				return
+			}
+			if out := logs.String(); !strings.Contains(out, "session entering degraded state") || strings.Contains(out, `"level":"WARN"`) {
+				t.Errorf("want the degraded line at Info, not Warn:\n%s", out)
+			}
+
+			s.OnDaveMLSExternalSenderPackage(buildExternalSenderPackage(t))
+			s.OnDavePrepareTransition(0, tt.protocolVersion)
+			if st := s.State(); !st.Ready || !st.DegradedSince.IsZero() {
+				t.Errorf("after the sole-member epoch reactivated: %+v, want Ready with DegradedSince cleared", st)
+			}
+		})
 	}
 }
