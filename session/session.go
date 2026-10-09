@@ -681,6 +681,12 @@ func (s *Session) OnDavePrepareEpoch(epoch int, protocolVersion uint16) {
 	}
 
 	s.transportOnly = protocolVersion == 0
+	// Not markDegradedLocked: this is every sole-member reset, so a Warn would
+	// bury the real ones.
+	if s.activeEpoch != nil && !s.transportOnly && s.degradedSince.IsZero() {
+		s.degradedSince = time.Now()
+		s.logger.Info("session entering degraded state", "reason", "epoch reset by prepare_epoch(1)")
+	}
 
 	s.activeEpoch = nil
 	s.pendingEpoch = nil
