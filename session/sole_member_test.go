@@ -109,6 +109,31 @@ func TestSoleMemberReset_EncryptsWhileAlone(t *testing.T) {
 	}
 }
 
+func TestEncrypt_UnassignedSSRCEncryptsWholeFrame(t *testing.T) {
+	s := New("123456789", &kpCapturingCallbacks{})
+	s.SetChannelID(987654321)
+	s.OnSelectProtocolAck(1)
+	s.OnDaveMLSExternalSenderPackage(buildExternalSenderPackage(t))
+	s.OnDavePrepareTransition(0, 1)
+	if !s.State().Ready {
+		t.Fatal("State().Ready should be true once the sole-member epoch is active")
+	}
+
+	plaintext := []byte("audio on an unassigned ssrc")
+	out := make([]byte, s.MaxEncryptedFrameSize(len(plaintext)))
+	n, err := s.Encrypt(99, plaintext, out)
+	if err != nil {
+		t.Fatalf("Encrypt on unassigned SSRC failed: %v", err)
+	}
+	parsed, err := frame.Parse(out[:n])
+	if err != nil {
+		t.Fatalf("expected an encrypted DAVE frame, got %x: %v", out[:n], err)
+	}
+	if len(parsed.UnencryptedRanges) != 0 {
+		t.Fatalf("expected the whole frame encrypted, got unencrypted ranges %v", parsed.UnencryptedRanges)
+	}
+}
+
 // TestSoleMemberReset_NoExternalSenderStaysPassthrough verifies that a
 // transition_id 0 with no external sender context (a protocol-version-0 session)
 // leaves the session in passthrough instead of erroring.
