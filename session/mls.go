@@ -645,7 +645,7 @@ func (s *Session) markDegradedLocked(reason string, args ...any) {
 func (s *Session) EpochAuthenticator(ctx context.Context) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.mlsClient == nil || len(s.groupID) == 0 {
+	if s.mlsClient == nil || len(s.groupID) == 0 || s.activeEpoch == nil {
 		return nil, ErrNoActiveEpoch
 	}
 

@@ -25,6 +25,58 @@ func TestEpochAuthenticator_RequiresActiveEpoch(t *testing.T) {
 	}
 }
 
+func TestEpochAuthenticator_RequiresActivation(t *testing.T) {
+	const welcomeTransitionID = 5
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, s *Session, cb *kpCapturingCallbacks) (activate func())
+	}{
+		{"local_group_not_activated", func(t *testing.T, s *Session, _ *kpCapturingCallbacks) func() {
+			t.Helper()
+			s.OnDaveMLSExternalSenderPackage(buildExternalSenderPackage(t))
+
+			return func() { s.OnDavePrepareTransition(0, 1) }
+		}},
+		{"welcome_not_executed", func(t *testing.T, s *Session, cb *kpCapturingCallbacks) func() {
+			t.Helper()
+			externalSenderPackage := buildExternalSenderPackage(t)
+			s.OnDaveMLSExternalSenderPackage(externalSenderPackage)
+			_, welcome := newWelcomeForExternalSender(t, cb.lastKeyPackage(), externalSenderPackage)
+			s.OnDaveMLSWelcome(welcomeTransitionID, welcome)
+
+			return func() { s.OnDaveExecuteTransition(welcomeTransitionID) }
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cb := &kpCapturingCallbacks{}
+			s := New("123456789", cb)
+			s.SetChannelID(987654321)
+			s.OnSelectProtocolAck(1)
+			activate := tt.prepare(t, s, cb)
+			if s.Ready() {
+				t.Fatal("an epoch is already active")
+			}
+
+			if _, err := s.EpochAuthenticator(context.Background()); !errors.Is(err, ErrNoActiveEpoch) {
+				t.Errorf("before activation, raw err = %v, want ErrNoActiveEpoch", err)
+			}
+			if _, err := s.EpochAuthenticatorCode(context.Background()); !errors.Is(err, ErrNoActiveEpoch) {
+				t.Errorf("before activation, code err = %v, want ErrNoActiveEpoch", err)
+			}
+
+			activate()
+			if !s.Ready() {
+				t.Fatal("epoch did not activate")
+			}
+			if _, err := s.EpochAuthenticatorCode(context.Background()); err != nil {
+				t.Errorf("after activation, code err = %v", err)
+			}
+		})
+	}
+}
+
 // TestEpochAuthenticator_AfterSoleMemberEpoch covers the happy path: after a
 // sole-member reset (opcode 25 + transition_id 0) there's an active MLS
 // epoch, EpochAuthenticator returns 32 bytes (DHKEMP256 AuthenticationSecret
