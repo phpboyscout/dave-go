@@ -18,9 +18,11 @@ var (
 	ErrNoExternalSender          = errors.New("session: no external sender package available")
 	ErrNoPreCommitState          = errors.New("session: no pre-commit state to restore")
 	ErrExpectedWelcome           = errors.New("session: expected Welcome in MLSMessage")
-	ErrNoCodecForSSRC            = errors.New("session: no codec assigned for ssrc")
 	ErrProposalsTooMany          = errors.New("session: too many proposal refs in revoke batch")
 	ErrNoActiveEpoch             = errors.New("session: no active E2EE epoch")
 	ErrInlineProposalInCommit    = errors.New("session: commit contains inline proposals (DAVE requires only references)")
 	ErrDuplicateGroupIdentity    = errors.New("session: duplicate user ID in group after commit")
+
+	// Deprecated: no longer returned.
+	ErrNoCodecForSSRC = errors.New("session: no codec assigned for ssrc")
 )
