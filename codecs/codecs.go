@@ -125,7 +125,7 @@ func EncryptWithCipher(kind Kind, plaintext []byte, gcm cipher.AEAD, nonce uint3
 // EncryptInto is like Encrypt but writes the encrypted frame into dst and
 // returns the number of bytes written, instead of allocating a new slice.
 //
-// For OPUS/VP9 (no unencrypted ranges) and cap(dst) >= len(plaintext)+16,
+// For OPUS/VP9 (no unencrypted ranges) and len(dst) >= len(plaintext)+16,
 // this performs zero heap allocations. dst and plaintext must not overlap.
 func EncryptInto(kind Kind, dst, plaintext, key []byte, nonce uint32) (int, error) {
 	if !supportedForEncrypt(kind) {
@@ -165,7 +165,7 @@ func EncryptInto(kind Kind, dst, plaintext, key []byte, nonce uint32) (int, erro
 // frame into dst and returns the number of bytes written, instead of
 // allocating a new slice.
 //
-// For OPUS/VP9 (no unencrypted ranges) and cap(dst) >= len(plaintext)+16,
+// For OPUS/VP9 (no unencrypted ranges) and len(dst) >= len(plaintext)+16,
 // this performs zero heap allocations. H264/H265 with start-code retry falls
 // back to EncryptInto (requires the key to retry with nonce+1). dst and
 // plaintext must not overlap.

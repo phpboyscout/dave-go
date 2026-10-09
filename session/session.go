@@ -360,7 +360,7 @@ func (s *Session) Encrypt(ssrc uint32, frameData []byte, encryptedFrame []byte) 
 	if ratchet == nil {
 		s.stats.PassthroughFrames++
 
-		return copy(encryptedFrame, frameData), nil
+		return copyPassthrough(encryptedFrame, frameData)
 	}
 
 	// Track frames sent via the retained ratchet during the transition
@@ -455,9 +455,8 @@ func (s *Session) Decrypt(userID godave.UserID, frameData []byte, decryptedFrame
 
 			return 0, ErrDecryptionFailed
 		}
-		n := copy(decryptedFrame, frameData)
 
-		return n, nil
+		return copyPassthrough(decryptedFrame, frameData)
 	}
 
 	parsed, err := frame.Parse(frameData)
@@ -514,6 +513,11 @@ func (s *Session) Decrypt(userID godave.UserID, frameData []byte, decryptedFrame
 
 			continue
 		}
+		// Checked before the nonce is committed, so a retry with a larger
+		// buffer isn't rejected as a replay.
+		if len(decryptedFrame) < len(plaintext) {
+			return 0, fmt.Errorf("%w: need %d, have %d", frame.ErrBufferTooSmall, len(plaintext), len(decryptedFrame))
+		}
 
 		// Authentication succeeded — now advance the expander, the ratchet base,
 		// and check anti-replay. All three MUST happen only after GCM tag
@@ -539,6 +543,16 @@ func (s *Session) Decrypt(userID godave.UserID, frameData []byte, decryptedFrame
 	}
 
 	return 0, ErrDecryptionFailed
+}
+
+// copyPassthrough copies frameData to dst unchanged, refusing rather than
+// truncating when dst is too short.
+func copyPassthrough(dst, frameData []byte) (int, error) {
+	if len(dst) < len(frameData) {
+		return 0, fmt.Errorf("%w: need %d, have %d", frame.ErrBufferTooSmall, len(frameData), len(dst))
+	}
+
+	return copy(dst, frameData), nil
 }
 
 func (s *Session) AddUser(userID godave.UserID) {

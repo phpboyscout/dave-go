@@ -35,7 +35,7 @@ func EncryptWithCipher(params EncryptWithCipherParams) ([]byte, error) {
 // allocating a new slice.
 //
 // When params.UnencryptedRanges is empty (e.g. OPUS) and
-// cap(dst) >= len(params.Plaintext)+16, the AES-GCM seal writes directly into
+// len(dst) >= len(params.Plaintext)+16, the AES-GCM seal writes directly into
 // dst's backing array and this call performs zero heap allocations. dst and
 // params.Plaintext must not overlap.
 func EncryptWithCipherInto(dst []byte, params EncryptWithCipherParams) (int, error) {
@@ -83,7 +83,7 @@ func Encrypt(params EncryptParams) ([]byte, error) {
 // returns the number of bytes written, instead of allocating a new slice.
 //
 // When params.UnencryptedRanges is empty (e.g. OPUS) and
-// cap(dst) >= len(params.Plaintext)+16, the AES-GCM seal writes directly into
+// len(dst) >= len(params.Plaintext)+16, the AES-GCM seal writes directly into
 // dst's backing array and this call performs zero heap allocations. dst and
 // params.Plaintext must not overlap.
 func EncryptInto(dst []byte, params EncryptParams) (int, error) {
@@ -103,16 +103,18 @@ func EncryptInto(dst []byte, params EncryptParams) (int, error) {
 }
 
 // encryptInto fills dst[:0] via encryptCoreAppend and copies the result back
-// into dst, returning the number of bytes written. If dst has enough spare
-// capacity, encryptCoreAppend writes directly into dst's backing array and
-// the final copy is a self-copy (no allocation, no data movement).
+// into dst, returning the number of bytes written. If dst is long enough,
+// encryptCoreAppend writes directly into dst's backing array and the final
+// copy is a self-copy (no allocation, no data movement).
 func encryptInto(dst []byte, gcm cipher.AEAD, plaintext []byte, truncatedNonce uint32, unencryptedRanges []Range) (int, error) {
-	out, err := encryptCoreAppend(dst[:0], gcm, plaintext, truncatedNonce, unencryptedRanges)
+	// Capping capacity at len(dst) keeps the append from writing into the
+	// caller's spare capacity, which isn't ours to use.
+	out, err := encryptCoreAppend(dst[:0:len(dst)], gcm, plaintext, truncatedNonce, unencryptedRanges)
 	if err != nil {
 		return 0, err
 	}
-	if len(out) > cap(dst) {
-		return 0, fmt.Errorf("%w: need %d, have %d", ErrBufferTooSmall, len(out), cap(dst))
+	if len(out) > len(dst) {
+		return 0, fmt.Errorf("%w: need %d, have %d", ErrBufferTooSmall, len(out), len(dst))
 	}
 
 	return copy(dst[:len(out)], out), nil

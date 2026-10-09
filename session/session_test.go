@@ -251,6 +251,64 @@ func TestDecryptRetainedEpochExpiry(t *testing.T) {
 	}
 }
 
+func TestPassthroughShortBuffer(t *testing.T) {
+	frameData := bytes.Repeat([]byte{0x33}, 40)
+	tests := []struct {
+		name string
+		run  func(s *Session, out []byte) (int, error)
+	}{
+		{"Encrypt", func(s *Session, out []byte) (int, error) { return s.Encrypt(1, frameData, out) }},
+		{"Decrypt", func(s *Session, out []byte) (int, error) { return s.Decrypt("peer", frameData, out) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New("test_user", testCallbacks{})
+			s.OnSelectProtocolAck(0)
+
+			if _, err := tt.run(s, make([]byte, len(frameData)-1)); !errors.Is(err, frame.ErrBufferTooSmall) {
+				t.Errorf("got err=%v, want %v", err, frame.ErrBufferTooSmall)
+			}
+			if n, err := tt.run(s, make([]byte, len(frameData))); err != nil || n != len(frameData) {
+				t.Errorf("full-length buffer: n=%d, err=%v", n, err)
+			}
+		})
+	}
+}
+
+func TestDecryptShortBufferKeepsFrame(t *testing.T) {
+	s := New("test_user", testCallbacks{})
+	ratchet := makeTestRatchet(t)
+	s.mu.Lock()
+	s.protocolVersion = 1
+	s.activeEpoch = &epochState{
+		id: 1,
+		senders: map[godave.UserID]*senderState{
+			"peer": {ratchet: ratchet, expander: mediakeys.NewNonceExpander()},
+		},
+	}
+	s.mu.Unlock()
+
+	key, err := ratchet.GetKey(0)
+	if err != nil {
+		t.Fatalf("GetKey(0): %v", err)
+	}
+	plaintext := []byte("opus frame payload")
+	encrypted, err := frame.Encrypt(frame.EncryptParams{Plaintext: plaintext, Key: key})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	if _, err := s.Decrypt("peer", encrypted, make([]byte, len(plaintext)-1)); !errors.Is(err, frame.ErrBufferTooSmall) {
+		t.Errorf("got err=%v, want %v", err, frame.ErrBufferTooSmall)
+	}
+	// The short buffer must not have used up the frame's nonce.
+	out := make([]byte, len(plaintext))
+	if n, err := s.Decrypt("peer", encrypted, out); err != nil || !bytes.Equal(out[:n], plaintext) {
+		t.Errorf("retry with a full-length buffer: n=%d, err=%v", n, err)
+	}
+}
+
 func TestOnDavePrepareEpochReset(t *testing.T) {
 	s := New("test_user", testCallbacks{})
 	sess := s
