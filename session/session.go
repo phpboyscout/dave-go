@@ -370,10 +370,7 @@ func (s *Session) Encrypt(ssrc uint32, frameData []byte, encryptedFrame []byte) 
 	}
 
 	kind, ok := s.ssrcCodecs[ssrc]
-	if !ok {
-		return 0, fmt.Errorf("%w: %d", ErrNoCodecForSSRC, ssrc)
-	}
-	if kind == codecs.CodecUnknown {
+	if !ok || kind == codecs.CodecUnknown {
 		kind = codecs.CodecOpus
 	}
 
