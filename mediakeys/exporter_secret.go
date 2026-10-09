@@ -30,8 +30,8 @@ func ExportWithMLSExporterSecret(
 		return nil, fmt.Errorf("hash exporter context: %w", err)
 	}
 
-	// Discord's DAVE protocol uses mlspp which uses "exported" (not "exporter") in step 2.
-	// This diverges from RFC 9420 §8.5 (which says "exporter") but matches mlspp and libdave behavior.
+	// RFC 9420 §8.5 expands with "exported" here, not "exporter", as mlspp
+	// and libdave do.
 	exportedSecret, err := derivedSecret.KdfExpandLabel("exported", contextHash, length)
 	if err != nil {
 		return nil, fmt.Errorf("expand exported secret: %w", err)

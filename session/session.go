@@ -94,7 +94,7 @@ type Session struct {
 	sendRetentionTTL      time.Duration
 
 	// sendCipher caches the AES-GCM cipher to avoid recreating it on every frame.
-	// Invalidated when the ratchet key changes (~every 16 frames per DAVE spec).
+	// Invalidated when the ratchet key changes, every 2^24 frames.
 	sendCipher    cipher.AEAD
 	sendCipherKey []byte // copy of the key used to create sendCipher
 
@@ -387,7 +387,7 @@ func (s *Session) Encrypt(ssrc uint32, frameData []byte, encryptedFrame []byte) 
 	ratchet.Commit(generation)
 
 	// Reuse the AES-GCM cipher if the key hasn't changed (hot path: same generation).
-	// The ratchet key changes every ~16 frames; recreation is infrequent.
+	// The ratchet key changes every 2^24 frames, so recreation is rare.
 	if !bytes.Equal(s.sendCipherKey, key) {
 		newCipher, cipherErr := frame.NewGCM8(key)
 		if cipherErr != nil {

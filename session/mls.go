@@ -640,7 +640,7 @@ func (s *Session) markDegradedLocked(reason string, args ...any) {
 }
 
 // EpochAuthenticator returns the raw epoch authenticator for the active MLS
-// epoch (RFC 9420 §8.2, via mls-go). Returns ErrNoActiveEpoch if no epoch
+// epoch (RFC 9420 §8.7, via mls-go). Returns ErrNoActiveEpoch if no epoch
 // is active or no MLS group has been established.
 func (s *Session) EpochAuthenticator(ctx context.Context) ([]byte, error) {
 	s.mu.Lock()

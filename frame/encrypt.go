@@ -255,10 +255,9 @@ func Decrypt(params DecryptParams) ([]byte, uint32, error) {
 // LooksLikeDAVEFrame does a quick check to see if a packet could be a DAVE frame
 // by checking the magic marker 0xFAFA at the expected position and the minimum size.
 //
-// The minimum size of 11 bytes corresponds to:
-// tag(8) + min nonce(1) + supplSize(1) + magic(2) = 12 bytes of footer
-// but with 0 bytes of interleaved frame, the total minimum is 12.
-// We use 11 as a conservative threshold for the quick check.
+// The smallest footer is 12 bytes: tag(8) + nonce(1) + supplSize(1) +
+// magic(2). The check uses 11, a looser bound; Parse rejects an 11-byte
+// footer because there is no nonce after the tag.
 //
 // Reference: protocol.md "Protocol Frame Check".
 func LooksLikeDAVEFrame(packet []byte) bool {
