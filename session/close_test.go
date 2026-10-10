@@ -145,6 +145,20 @@ func TestWaitShutdown_RespectsContext(t *testing.T) {
 	}
 }
 
+// closeAtCleanup closes s when the test ends and waits for its watchdogs, so
+// none of them outlives the test and logs into a later one.
+func closeAtCleanup(t *testing.T, s *Session) {
+	t.Helper()
+	t.Cleanup(func() {
+		_ = s.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := s.WaitShutdown(ctx); err != nil {
+			t.Errorf("WaitShutdown: %v", err)
+		}
+	})
+}
+
 type blockingInvalidCallbacks struct {
 	testCallbacks
 	entered chan struct{}
