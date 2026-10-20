@@ -101,6 +101,7 @@ type Session struct {
 	retainedSendRatchet   *mediakeys.KeyRatchet
 	retainedSendExpiresAt time.Time
 	sendRetentionTTL      time.Duration
+	strictEncrypt         bool
 
 	// sendCipher caches the AES-GCM cipher to avoid recreating it on every frame.
 	// Invalidated when the ratchet key changes, every 2^24 frames.
@@ -169,6 +170,7 @@ type config struct {
 	logger           *slog.Logger
 	recoveryTimeout  time.Duration
 	sendRetentionTTL time.Duration
+	strictEncrypt    bool
 	hook             func(*Session)
 }
 
@@ -196,6 +198,18 @@ func WithRecoveryTimeout(d time.Duration) Option {
 		if d > 0 {
 			c.recoveryTimeout = d
 		}
+	}
+}
+
+// WithStrictEncrypt makes Encrypt return ErrMissingKeyRatchet, instead of
+// passing the frame through unencrypted, when E2EE has been negotiated
+// (protocol version above 0) but the session has no send key: during the
+// handshake, after a reset once the previous key's retention ends, or when an
+// epoch activates without this user in it. This departs from godave.Session's
+// passthrough contract, so the caller must handle the error.
+func WithStrictEncrypt() Option {
+	return func(c *config) {
+		c.strictEncrypt = true
 	}
 }
 
@@ -241,6 +255,7 @@ func New(userID godave.UserID, callbacks godave.Callbacks, opts ...Option) *Sess
 		users:            make(map[godave.UserID]struct{}),
 		sendCounter:      mediakeys.NewNonceCounter(),
 		sendRetentionTTL: cfg.sendRetentionTTL,
+		strictEncrypt:    cfg.strictEncrypt,
 		retry:            defaultRetryConfig(),
 		epochReady:       make(chan struct{}),
 		recoveryTimeout:  cfg.recoveryTimeout,
@@ -401,9 +416,15 @@ func (s *Session) Encrypt(ssrc uint32, frameData []byte, encryptedFrame []byte) 
 	// too. Mirrors libdave's default passthrough mode (protocol.md
 	// "Passthrough Mode"). Note: a nil activeEpoch is OK as long as the
 	// retained ratchet is set — that's the post-reset transition window
-	// before the new epoch activates.
+	// before the new epoch activates. WithStrictEncrypt errors instead once
+	// E2EE is negotiated, as libdave does outside passthrough mode.
 	ratchet := s.selectSendRatchetLocked()
 	if ratchet == nil {
+		if s.strictEncrypt && s.protocolVersion != 0 {
+			s.stats.EncryptFailures++
+
+			return 0, ErrMissingKeyRatchet
+		}
 		s.stats.PassthroughFrames++
 
 		return copyPassthrough(encryptedFrame, frameData)
