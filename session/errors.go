@@ -31,4 +31,7 @@ var (
 var (
 	errSendFailed = errors.New("session: gateway send failed")
 	errSuperseded = errors.New("session: send no longer wanted")
+
+	errUnsupportedCipherSuite = errors.New("session: welcome uses an unsupported cipher suite")
+	errWelcomePanic           = errors.New("session: mls-go panicked joining the welcome")
 )
