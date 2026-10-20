@@ -12,7 +12,6 @@ var (
 	// retryDelay is the initial delay between attempts. Doubles per
 	// attempt up to retryMaxDelay. Total worst-case window is bounded
 	// by the sum of the backoff schedule (~12.5s with the defaults).
-	// Tests override to 0 to keep retry tests instant.
 	retryDelay = 500 * time.Millisecond //nolint:gochecknoglobals
 	// retryMaxDelay caps the per-attempt delay so a long gateway
 	// outage doesn't push the retry window into the tens of seconds.
@@ -23,9 +22,8 @@ var (
 )
 
 // retryConfig is the back-off a Session uses, copied from the package defaults
-// when the Session is created. Reading it from the Session instead of the
-// package variables keeps a recovery goroutine that outlives its test from
-// racing with a later test that changes those variables.
+// when the Session is created, so a test can shorten its own session's back-off
+// without changing it for every other test in the package.
 type retryConfig struct {
 	delay       time.Duration
 	maxDelay    time.Duration
