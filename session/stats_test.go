@@ -18,7 +18,7 @@ func TestStats_DecryptFailuresCounted(t *testing.T) {
 	s := New("123456789", cb)
 	buf := make([]byte, 64)
 
-	// No active epoch: clean passthrough, must not count.
+	// E2EE not established: clean passthrough, must not count.
 	if _, err := s.Decrypt("user1", []byte{0x01, 0x02, 0x03}, buf); err != nil {
 		t.Fatalf("passthrough decrypt: %v", err)
 	}
@@ -26,9 +26,9 @@ func TestStats_DecryptFailuresCounted(t *testing.T) {
 		t.Fatalf("DecryptFailures after passthrough = %d, want 0", got)
 	}
 
-	// Active epoch + protocol v1: a non-DAVE frame is a plaintext injection.
+	// E2EE established at protocol v1: a non-DAVE frame is a plaintext injection.
 	s.mu.Lock()
-	s.activeEpoch = &epochState{id: 1, groupID: []byte("g"), senders: map[godave.UserID]*senderState{}}
+	s.plaintextRejectedFrom = time.Now()
 	s.protocolVersion = 1
 	s.mu.Unlock()
 	if _, err := s.Decrypt("user1", []byte{0x01, 0x02, 0x03}, buf); !errors.Is(err, ErrDecryptionFailed) {
