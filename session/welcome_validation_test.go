@@ -307,8 +307,9 @@ func TestOnDaveMLSWelcome_RejectsUnsupportedCipherSuite(t *testing.T) {
 			}()
 
 			stats := s.Stats()
-			if stats.WelcomesJoined != 0 || stats.WelcomesFailed != 1 {
-				t.Fatalf("WelcomesJoined = %d, WelcomesFailed = %d, want 0 and 1", stats.WelcomesJoined, stats.WelcomesFailed)
+			if stats.WelcomesJoined != 0 || stats.WelcomesFailed != 1 || stats.WelcomePanics != 0 {
+				t.Fatalf("WelcomesJoined = %d, WelcomesFailed = %d, WelcomePanics = %d, want 0, 1 and 0",
+					stats.WelcomesJoined, stats.WelcomesFailed, stats.WelcomePanics)
 			}
 			if invalid := cb.invalid.Load(); invalid != 1 {
 				t.Fatalf("invalid_commit_welcome sent %d times, want 1", invalid)
