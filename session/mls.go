@@ -730,6 +730,9 @@ func (s *Session) activatePendingEpochLocked() {
 
 	s.activeEpoch = s.pendingEpoch
 	s.pendingEpoch = nil
+	if s.protocolVersion != 0 && s.plaintextRejectedFrom.IsZero() {
+		s.plaintextRejectedFrom = time.Now().Add(s.plaintextGrace)
+	}
 	s.groupID = append([]byte(nil), s.pendingGroupID...)
 	s.pendingGroupID = nil
 	// activatePendingEpochLocked runs from OnDaveExecuteTransition (opcode 22)
