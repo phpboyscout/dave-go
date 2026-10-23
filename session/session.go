@@ -56,6 +56,11 @@ type Session struct {
 
 	channelID       godave.ChannelID
 	protocolVersion uint16
+	// sendProtocolVersion is the protocol version Encrypt sends under: set by
+	// select_protocol_ack and executed transitions (transition 0 executes on
+	// arrival), not by their announcement, so a strict session passes frames
+	// through during an upgrade from v0.
+	sendProtocolVersion uint16
 	// transportOnly is true once protocol version 0 is in effect: negotiated
 	// by SELECT_PROTOCOL_ACK or PrepareEpoch, or reached by an executed
 	// transition. Distinct from protocolVersion == 0, which is also the state
@@ -202,10 +207,11 @@ func WithRecoveryTimeout(d time.Duration) Option {
 }
 
 // WithStrictEncrypt makes Encrypt return ErrMissingKeyRatchet, instead of
-// passing the frame through unencrypted, when E2EE has been negotiated
-// (protocol version above 0) but the session has no send key: during the
-// handshake, after a reset once the previous key's retention ends, or when an
-// epoch activates without this user in it. This departs from godave.Session's
+// passing the frame through unencrypted, when a protocol version above 0 is in
+// effect but the session has no send key: during the handshake, after a reset
+// once the previous key's retention ends, or when an epoch activates without
+// this user in it. An upgrade from version 0 passes frames through until its
+// transition executes, as libdave does. This departs from godave.Session's
 // passthrough contract, so the caller must handle the error.
 func WithStrictEncrypt() Option {
 	return func(c *config) {
@@ -417,10 +423,10 @@ func (s *Session) Encrypt(ssrc uint32, frameData []byte, encryptedFrame []byte) 
 	// "Passthrough Mode"). Note: a nil activeEpoch is OK as long as the
 	// retained ratchet is set — that's the post-reset transition window
 	// before the new epoch activates. WithStrictEncrypt errors instead once
-	// E2EE is negotiated, as libdave does outside passthrough mode.
+	// E2EE is in effect, as libdave does outside passthrough mode.
 	ratchet := s.selectSendRatchetLocked()
 	if ratchet == nil {
-		if s.strictEncrypt && s.protocolVersion != 0 {
+		if s.strictEncrypt && s.sendProtocolVersion != 0 {
 			s.stats.EncryptFailures++
 
 			return 0, ErrMissingKeyRatchet
@@ -638,6 +644,7 @@ func (s *Session) OnSelectProtocolAck(protocolVersion uint16) {
 	s.lockMLS()
 	defer s.unlockMLS()
 	s.protocolVersion = protocolVersion
+	s.sendProtocolVersion = protocolVersion
 	s.transportOnly = protocolVersion == 0
 	if protocolVersion > 0 {
 		// select_protocol_ack always marks a new voice connection — reset all
@@ -697,6 +704,7 @@ func (s *Session) OnDavePrepareTransition(transitionID uint16, protocolVersion u
 	// encrypting while alone (protocol.md "Sole member reset").
 	if transitionID == 0 {
 		s.activeTransitionID = 0
+		s.sendProtocolVersion = protocolVersion
 		s.activateSoleMemberEpochLocked()
 		s.pendingTransitionID = 0
 
@@ -736,6 +744,7 @@ func (s *Session) OnDaveExecuteTransition(transitionID uint16) {
 		return
 	}
 	s.activeTransitionID = transitionID
+	s.sendProtocolVersion = s.protocolVersion
 	s.transportOnly = s.protocolVersion == 0
 
 	// Downgrade to v0 (protocol.md:129): immediately clear the send-side
