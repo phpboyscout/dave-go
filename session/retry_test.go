@@ -9,13 +9,11 @@ import (
 	"time"
 )
 
-func init() {
-	// Tests override retryDelay to zero so they don't wait 1+ second.
-	retryDelay = 0
-}
-
 func newTestSession() *Session {
-	return New("user-1", &kpCapturingCallbacks{}, WithLogger(slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))))
+	s := New("user-1", &kpCapturingCallbacks{}, WithLogger(slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))))
+	s.retry.delay = 0
+
+	return s
 }
 
 func TestRetrySend_SucceedsOnFirstAttempt(t *testing.T) {
@@ -129,15 +127,10 @@ func TestIsShardNotReady(t *testing.T) {
 // causes the in-progress retrySend to exit early with the context
 // error instead of waiting for the full backoff to elapse.
 func TestRetrySend_HonorsClose(t *testing.T) {
-	// Use a non-zero delay so the retrySend goroutine is actually inside
-	// the interruptible select when Close arrives. The init() override
-	// sets retryDelay=0 globally which would make the timer fire before
-	// Close has a chance to cancel it.
-	origDelay := retryDelay
-	retryDelay = 200 * time.Millisecond
-	defer func() { retryDelay = origDelay }()
-
 	s := newTestSession()
+	// Use a non-zero delay so the retrySend goroutine is actually inside
+	// the interruptible select when Close arrives.
+	s.retry.delay = 200 * time.Millisecond
 
 	// Run retrySend in a goroutine. The function always returns
 	// "shard not ready" so the retry would otherwise cycle through the
@@ -166,19 +159,13 @@ func TestRetrySend_HonorsClose(t *testing.T) {
 }
 
 // TestRetrySend_ExponentialBackoff verifies the per-attempt delay doubles
-// up to the cap. With retryDelay=50ms and retryMaxDelay=200ms, the
+// up to the cap. With a 50ms delay and a 200ms cap, the
 // expected schedule is [50, 100, 200, 200, 200]ms = 750ms minimum for
 // 5 delays between 6 attempts.
 func TestRetrySend_ExponentialBackoff(t *testing.T) {
-	origDelay, origMax := retryDelay, retryMaxDelay
-	retryDelay = 50 * time.Millisecond
-	retryMaxDelay = 200 * time.Millisecond
-	defer func() {
-		retryDelay = origDelay
-		retryMaxDelay = origMax
-	}()
-
 	s := newTestSession()
+	s.retry.delay = 50 * time.Millisecond
+	s.retry.maxDelay = 200 * time.Millisecond
 
 	start := time.Now()
 	err := s.retrySend(nil, func() error {
@@ -203,15 +190,9 @@ func TestRetrySend_ExponentialBackoff(t *testing.T) {
 // exhausts all attempts — and that it keeps accumulating across multiple
 // retrySend calls on the same session instead of being reset each time.
 func TestRetrySend_TransportRetryDurationAccumulates(t *testing.T) {
-	origDelay, origMax := retryDelay, retryMaxDelay
-	retryDelay = 20 * time.Millisecond
-	retryMaxDelay = 50 * time.Millisecond
-	defer func() {
-		retryDelay = origDelay
-		retryMaxDelay = origMax
-	}()
-
 	s := newTestSession()
+	s.retry.delay = 20 * time.Millisecond
+	s.retry.maxDelay = 50 * time.Millisecond
 
 	// First call: fails twice with "shard is not ready", then succeeds.
 	// Schedule: sleep(20ms) then sleep(40ms) = 60ms minimum before success.
@@ -252,11 +233,8 @@ func TestRetrySend_TransportRetryDurationAccumulates(t *testing.T) {
 // even though the loop exits early via context cancellation instead of
 // completing the backoff schedule.
 func TestRetrySend_TransportRetryDurationCountsPartialWaitOnClose(t *testing.T) {
-	origDelay := retryDelay
-	retryDelay = 200 * time.Millisecond
-	defer func() { retryDelay = origDelay }()
-
 	s := newTestSession()
+	s.retry.delay = 200 * time.Millisecond
 
 	done := make(chan error, 1)
 	go func() {

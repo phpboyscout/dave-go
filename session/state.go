@@ -34,6 +34,10 @@ type Stats struct {
 	CommitsFailed    uint64
 	WelcomesJoined   uint64
 	WelcomesFailed   uint64
+	// WelcomePanics counts the Welcomes, out of WelcomesFailed, that made
+	// mls-go panic. The session recovers and rejoins, but any non-zero value
+	// is an mls-go bug worth reporting with the logged stack.
+	WelcomePanics uint64
 	// RecoveryAttempts counts recovery watchdogs armed, by an MLS fault
 	// (invalid commit/welcome) or by a send the voice gateway never got.
 	// See watchRecoveryLocked.

@@ -66,6 +66,12 @@ type Session struct {
 	// transition. Distinct from protocolVersion == 0, which is also the state
 	// before anything has been negotiated.
 	transportOnly bool
+	// plaintextRejectedFrom is when Decrypt starts rejecting non-DAVE frames,
+	// zero until the first epoch above protocol version 0 activates. An epoch
+	// reset leaves it set; only protocol version 0 clears it. The grace matches
+	// libdave's decryptor, so frames from a peer still switching aren't dropped.
+	plaintextRejectedFrom time.Time
+	plaintextGrace        time.Duration
 
 	ssrcCodecs map[uint32]codecs.Kind
 	users      map[godave.UserID]struct{}
@@ -261,6 +267,7 @@ func New(userID godave.UserID, callbacks godave.Callbacks, opts ...Option) *Sess
 		users:            make(map[godave.UserID]struct{}),
 		sendCounter:      mediakeys.NewNonceCounter(),
 		sendRetentionTTL: cfg.sendRetentionTTL,
+		plaintextGrace:   epochRetention,
 		strictEncrypt:    cfg.strictEncrypt,
 		retry:            defaultRetryConfig(),
 		epochReady:       make(chan struct{}),
@@ -517,13 +524,13 @@ func (s *Session) Decrypt(userID godave.UserID, frameData []byte, decryptedFrame
 	defer s.mu.Unlock()
 
 	if !frame.LooksLikeDAVEFrame(frameData) {
-		// Under active E2EE, a non-DAVE frame is a plaintext injection and is
-		// rejected (only the silence packet is allowed through). But once the
-		// session has been downgraded to transport-only (protocolVersion 0),
-		// passthrough is the expected mode again — even while activeEpoch is
-		// still retained to decrypt in-flight DAVE frames from before the
-		// downgrade — so v0 plaintext frames must pass through.
-		if s.activeEpoch != nil && s.protocolVersion != 0 && !isSilencePacket(frameData) {
+		// Once E2EE is established, a non-DAVE frame is a plaintext injection
+		// and is rejected (only the silence packet is allowed through). But
+		// once the session has been downgraded to transport-only
+		// (protocolVersion 0), passthrough is the expected mode again — even
+		// while activeEpoch is still retained to decrypt in-flight DAVE frames
+		// from before the downgrade — so v0 plaintext frames must pass through.
+		if s.rejectsPlaintextLocked() && !isSilencePacket(frameData) {
 			s.stats.DecryptFailures++
 
 			return 0, ErrDecryptionFailed
@@ -645,7 +652,7 @@ func (s *Session) OnSelectProtocolAck(protocolVersion uint16) {
 	defer s.unlockMLS()
 	s.protocolVersion = protocolVersion
 	s.sendProtocolVersion = protocolVersion
-	s.transportOnly = protocolVersion == 0
+	s.setTransportOnlyLocked(protocolVersion == 0)
 	if protocolVersion > 0 {
 		// select_protocol_ack always marks a new voice connection — reset all
 		// group state so stale data from a previous channel cannot block
@@ -745,7 +752,7 @@ func (s *Session) OnDaveExecuteTransition(transitionID uint16) {
 	}
 	s.activeTransitionID = transitionID
 	s.sendProtocolVersion = s.protocolVersion
-	s.transportOnly = s.protocolVersion == 0
+	s.setTransportOnlyLocked(s.protocolVersion == 0)
 
 	// Downgrade to v0 (protocol.md:129): immediately clear the send-side
 	// so Encrypt falls back to passthrough. Keep activeEpoch for
@@ -783,7 +790,7 @@ func (s *Session) OnDavePrepareEpoch(epoch int, protocolVersion uint16) {
 		return
 	}
 
-	s.transportOnly = protocolVersion == 0
+	s.setTransportOnlyLocked(protocolVersion == 0)
 	// Not markDegradedLocked: this is every sole-member reset, so a Warn would
 	// bury the real ones.
 	if s.activeEpoch != nil && !s.transportOnly && s.degradedSince.IsZero() {
@@ -1059,6 +1066,19 @@ func toCodecKind(codec godave.Codec) codecs.Kind {
 	default:
 		return codecs.CodecUnknown
 	}
+}
+
+func (s *Session) setTransportOnlyLocked(transportOnly bool) {
+	s.transportOnly = transportOnly
+	if transportOnly {
+		s.plaintextRejectedFrom = time.Time{}
+	}
+}
+
+func (s *Session) rejectsPlaintextLocked() bool {
+	return s.protocolVersion != 0 &&
+		!s.plaintextRejectedFrom.IsZero() &&
+		!time.Now().Before(s.plaintextRejectedFrom)
 }
 
 // isSilencePacket reports whether frameData is exactly the 3-byte SFU silence

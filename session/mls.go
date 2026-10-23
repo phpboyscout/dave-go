@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -166,9 +167,17 @@ func (s *Session) sendKeyPackageLocked(kp []byte) error {
 }
 
 func (s *Session) joinPendingWelcomeLocked(welcome []byte) error {
-	groupID, err := s.mlsClient.client.JoinGroup(context.Background(), welcome)
+	// mls-go v1.6.0 panics on a Welcome with an unknown cipher suite.
+	suite, err := welcomeCipherSuite(welcome)
 	if err != nil {
-		return fmt.Errorf("join group from welcome: %w", err)
+		return err
+	}
+	if suite != ciphersuite.MLS128DHKEMP256 {
+		return fmt.Errorf("%w: %v", errUnsupportedCipherSuite, suite)
+	}
+	groupID, err := s.joinGroupLocked(welcome)
+	if err != nil {
+		return err
 	}
 	if valErr := s.validateJoinedWelcomeExternalSenderLocked(groupID); valErr != nil {
 		return valErr
@@ -186,6 +195,38 @@ func (s *Session) joinPendingWelcomeLocked(welcome []byte) error {
 	s.pendingEpoch = epochState
 
 	return nil
+}
+
+// joinGroupLocked turns a panic inside mls-go into a failed join, so a Welcome
+// mls-go cannot handle costs the session its MLS state, not the process.
+func (s *Session) joinGroupLocked(welcome []byte) (groupID []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.stats.WelcomePanics++
+			s.logger.Error("mls-go panicked joining a welcome", "panic", r, "stack", string(debug.Stack()))
+			err = fmt.Errorf("%w: %v", errWelcomePanic, r)
+		}
+	}()
+	groupID, err = s.mlsClient.client.JoinGroup(context.Background(), welcome)
+	if err != nil {
+		return nil, fmt.Errorf("join group from welcome: %w", err)
+	}
+
+	return groupID, nil
+}
+
+// welcomeCipherSuite reads the cipher suite the way mls-go's JoinGroup parses
+// a Welcome: as an MLSMessage first, then as a bare Welcome.
+func welcomeCipherSuite(welcome []byte) (ciphersuite.CipherSuite, error) {
+	if msg, err := framing.UnmarshalMLSMessage(welcome); err == nil {
+		welcome = msg.Welcome
+	}
+	parsed, err := group.UnmarshalWelcome(welcome)
+	if err != nil {
+		return 0, fmt.Errorf("parse welcome: %w", err)
+	}
+
+	return parsed.CipherSuite, nil
 }
 
 func (s *Session) validateJoinedWelcomeExternalSenderLocked(groupID []byte) error {
@@ -731,6 +772,9 @@ func (s *Session) activatePendingEpochLocked() {
 	s.activeEpoch = s.pendingEpoch
 	s.pendingEpoch = nil
 	s.sendProtocolVersion = s.protocolVersion
+	if s.protocolVersion != 0 && s.plaintextRejectedFrom.IsZero() {
+		s.plaintextRejectedFrom = time.Now().Add(s.plaintextGrace)
+	}
 	s.groupID = append([]byte(nil), s.pendingGroupID...)
 	s.pendingGroupID = nil
 	// activatePendingEpochLocked runs from OnDaveExecuteTransition (opcode 22)

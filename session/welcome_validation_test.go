@@ -3,12 +3,17 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/disgoorg/godave"
 	"github.com/thomas-vilte/mls-go"
 	"github.com/thomas-vilte/mls-go/ciphersuite"
+	"github.com/thomas-vilte/mls-go/framing"
 	memorystore "github.com/thomas-vilte/mls-go/storage/memory"
 )
 
@@ -262,4 +267,115 @@ func TestOnDaveMLSWelcome_AfterOwnCommit(t *testing.T) {
 	if len(s.pendingCommitBytes) != 0 || len(s.proposalQueue) != 0 {
 		t.Fatalf("%d bytes of our commit and %d queued batches left after the Welcome", len(s.pendingCommitBytes), len(s.proposalQueue))
 	}
+}
+
+// TestOnDaveMLSWelcome_RejectsUnsupportedCipherSuite verifies that a Welcome
+// naming any cipher suite other than the DAVE one takes the failed-Welcome
+// path, whether it arrives bare or wrapped in an MLSMessage.
+func TestOnDaveMLSWelcome_RejectsUnsupportedCipherSuite(t *testing.T) {
+	tests := []struct {
+		name    string
+		suite   uint16
+		wrapped bool
+	}{
+		{name: "suite 0x0001", suite: 0x0001},
+		{name: "suite 0x0080", suite: 0x0080},
+		{name: "suite 0x0000", suite: 0x0000},
+		{name: "suite 0xffff", suite: 0xffff},
+		{name: "suite 0x0080 in an MLSMessage", suite: 0x0080, wrapped: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cb := &invalidCountingCallbacks{}
+			s := New("123456789", cb)
+			closeAtCleanup(t, s)
+			s.SetChannelID(987654321)
+			s.OnSelectProtocolAck(1)
+			externalSenderPackage := buildExternalSenderPackage(t)
+			setExternalSenderPackage(t, s, externalSenderPackage)
+			botKP := cb.lastKeyPackage()
+			_, welcome := newWelcomeForExternalSender(t, botKP, externalSenderPackage)
+			welcome = withWelcomeCipherSuite(t, welcome, tt.suite, tt.wrapped)
+
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("OnDaveMLSWelcome panicked: %v", r)
+					}
+				}()
+				s.OnDaveMLSWelcome(1, welcome)
+			}()
+
+			stats := s.Stats()
+			if stats.WelcomesJoined != 0 || stats.WelcomesFailed != 1 || stats.WelcomePanics != 0 {
+				t.Fatalf("WelcomesJoined = %d, WelcomesFailed = %d, WelcomePanics = %d, want 0, 1 and 0",
+					stats.WelcomesJoined, stats.WelcomesFailed, stats.WelcomePanics)
+			}
+			if invalid := cb.invalid.Load(); invalid != 1 {
+				t.Fatalf("invalid_commit_welcome sent %d times, want 1", invalid)
+			}
+			if kp := cb.lastKeyPackage(); bytes.Equal(kp, botKP) {
+				t.Fatal("no new key package sent after the failed Welcome")
+			}
+		})
+	}
+}
+
+// TestJoinGroup_RecoversMLSPanic feeds mls-go a Welcome it panics on, past the
+// cipher suite check, to exercise the backstop behind it.
+func TestJoinGroup_RecoversMLSPanic(t *testing.T) {
+	cb := &invalidCountingCallbacks{}
+	var logs bytes.Buffer
+	s := New("123456789", cb, WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))))
+	closeAtCleanup(t, s)
+	s.SetChannelID(987654321)
+	s.OnSelectProtocolAck(1)
+	externalSenderPackage := buildExternalSenderPackage(t)
+	setExternalSenderPackage(t, s, externalSenderPackage)
+	_, welcome := newWelcomeForExternalSender(t, cb.lastKeyPackage(), externalSenderPackage)
+	welcome = withWelcomeCipherSuite(t, welcome, 0x0080, false)
+
+	s.lockMLS()
+	var err error
+	func() {
+		defer s.unlockMLS()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("joinGroupLocked panicked: %v", r)
+			}
+		}()
+		if err = s.ensureMLSClientLocked(); err != nil {
+			t.Fatalf("ensureMLSClientLocked: %v", err)
+		}
+		_, err = s.joinGroupLocked(welcome)
+	}()
+
+	if !errors.Is(err, errWelcomePanic) {
+		t.Fatalf("joinGroupLocked error = %v, want errWelcomePanic", err)
+	}
+	if got := s.Stats().WelcomePanics; got != 1 {
+		t.Fatalf("WelcomePanics = %d, want 1", got)
+	}
+	if out := logs.String(); !strings.Contains(out, "mls-go panicked joining a welcome") || !strings.Contains(out, "goroutine ") {
+		t.Fatalf("panic not logged with its stack:\n%s", out)
+	}
+}
+
+// withWelcomeCipherSuite returns welcome as a bare Welcome, or wrapped in an
+// MLSMessage, with its cipher suite replaced.
+func withWelcomeCipherSuite(t *testing.T, welcome []byte, suite uint16, wrapped bool) []byte {
+	t.Helper()
+	if msg, err := framing.UnmarshalMLSMessage(welcome); err == nil {
+		welcome = msg.Welcome
+	}
+	if len(welcome) < 2 {
+		t.Fatalf("welcome too short: %x", welcome)
+	}
+	bare := binary.BigEndian.AppendUint16(nil, suite)
+	bare = append(bare, welcome[2:]...)
+	if !wrapped {
+		return bare
+	}
+
+	return (&framing.MLSMessage{Welcome: bare}).Marshal()
 }
