@@ -640,6 +640,7 @@ func (s *Session) OnSelectProtocolAck(protocolVersion uint16) {
 	s.proposalQueue = nil
 	s.recoveryAttempts = 0
 	s.resetEpochReadyLocked()
+	s.endDegradedLocked()
 	s.pendingKeyPackage = nil
 	s.mlsClient = nil
 	if protocolVersion == 0 {

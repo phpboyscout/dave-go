@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -441,3 +442,34 @@ func TestOnSelectProtocolAck_V0StopsRecovery(t *testing.T) {
 	}
 }
 
+// TestOnSelectProtocolAck_EndsDegradedInterval checks that an ack, as the
+// start of a new connection, clears DegradedSince without losing the interval
+// from DegradedDuration.
+func TestOnSelectProtocolAck_EndsDegradedInterval(t *testing.T) {
+	for _, version := range []uint16{0, 1} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			s := New("123456789", testCallbacks{})
+			closeAtCleanup(t, s)
+			const degradedFor = time.Second
+			s.mu.Lock()
+			s.degradedSince = time.Now().Add(-degradedFor)
+			s.mu.Unlock()
+
+			s.OnSelectProtocolAck(version)
+
+			if got := s.State().DegradedSince; !got.IsZero() {
+				t.Errorf("DegradedSince = %v, want zero", got)
+			}
+			got := s.Stats().DegradedDuration
+			if got < degradedFor {
+				t.Fatalf("DegradedDuration = %v, want >= %v", got, degradedFor)
+			}
+
+			s.OnSelectProtocolAck(version)
+
+			if again := s.Stats().DegradedDuration; again != got {
+				t.Errorf("DegradedDuration = %v after a second ack, want %v unchanged", again, got)
+			}
+		})
+	}
+}
