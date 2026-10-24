@@ -380,6 +380,14 @@ func TestOnSelectProtocolAck_V0AfterMoveDropsSendKey(t *testing.T) {
 		t.Fatalf("SETUP: Encrypt = %x, %v; want a DAVE frame", out[:n], err)
 	}
 	transitionWindows := s.Stats().TransitionWindows
+	s.mu.Lock()
+	hadActiveEpoch := s.activeEpoch != nil
+	s.pendingEpoch = &epochState{id: 6}
+	s.retainedEpoch = []*epochState{{id: 4}}
+	s.mu.Unlock()
+	if !hadActiveEpoch {
+		t.Fatal("SETUP: no active epoch before the move")
+	}
 
 	s.SetChannelID(111111111)
 	s.OnSelectProtocolAck(0)
@@ -399,6 +407,10 @@ func TestOnSelectProtocolAck_V0AfterMoveDropsSendKey(t *testing.T) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.activeEpoch != nil || s.pendingEpoch != nil || s.retainedEpoch != nil {
+		t.Errorf("activeEpoch %+v, pendingEpoch %+v, retainedEpoch %+v; want all nil",
+			s.activeEpoch, s.pendingEpoch, s.retainedEpoch)
+	}
 	if s.groupID != nil || s.mlsClient != nil || s.pendingKeyPackage != nil || s.retainedSendRatchet != nil || s.sendCipher != nil {
 		t.Errorf("groupID %x, mlsClient set %v, pendingKeyPackage %x, retainedSendRatchet set %v, sendCipher set %v; want all cleared",
 			s.groupID, s.mlsClient != nil, s.pendingKeyPackage, s.retainedSendRatchet != nil, s.sendCipher != nil)
@@ -428,3 +440,4 @@ func TestOnSelectProtocolAck_V0StopsRecovery(t *testing.T) {
 		t.Errorf("recoveryAttempts = %d, want 0", s.recoveryAttempts)
 	}
 }
+
